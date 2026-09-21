@@ -1,4 +1,7 @@
+
 from pathlib import Path
+import json
+import runpy
 
 from src.anomaly_detector import AnomalyDetector
 from src.aiops_pipeline import run_pipeline
@@ -70,3 +73,153 @@ def test_consumer_receives_event():
     messages = consumer.consume()
 
     assert len(messages) == 1
+
+def test_pipeline_processes_normal_and_anomalous_records(tmp_path):
+    data_file = tmp_path / "service_data.json"
+    records = [
+        {
+            "timestamp": "2026-09-20T10:00:00",
+            "service": "payment-service",
+            "response_time_ms": 100,
+            "cpu_percent": 20,
+            "memory_percent": 30,
+            "log_level": "INFO",
+            "message": "Request completed"
+        },
+        {
+            "timestamp": "2026-09-20T10:05:00",
+            "service": "payment-service",
+            "response_time_ms": 700,
+            "cpu_percent": 90,
+            "memory_percent": 95,
+            "log_level": "WARNING",
+            "message": "Service is unhealthy"
+        }
+    ]
+    data_file.write_text(json.dumps(records), encoding="utf-8")
+
+    result = run_pipeline(str(data_file))
+
+    assert result["records_processed"] == 2
+    assert len(result["anomalies_detected"]) == 1
+    assert result["anomalies_detected"][0]["type"] == "ANOMALY"
+    assert len(result["events_consumed"]) == 1
+    assert result["events_consumed"][0]["type"] == "ANOMALY"
+
+
+def test_pipeline_script_runs(tmp_path, monkeypatch, capsys):
+    data_directory = tmp_path / "data"
+    data_directory.mkdir()
+
+    records = [
+        {
+            "timestamp": "2026-09-20T10:00:00",
+            "service": "payment-service",
+            "response_time_ms": 100,
+            "cpu_percent": 20,
+            "memory_percent": 30,
+            "log_level": "INFO",
+            "message": "Request completed"
+        }
+    ]
+
+    (data_directory / "service_data.json").write_text(
+        json.dumps(records),
+        encoding="utf-8"
+
+        
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    runpy.run_path(
+        str(Path(__file__).parents[1] / "src" / "aiops_pipeline.py"),
+        run_name="__main__"
+    )
+
+    output = capsys.readouterr().out
+    assert "AIOps Pipeline Result" in output
+    assert "Records processed: 1" in output
+    assert "Anomalies detected: 0" in output
+
+
+def test_detector_detects_all_anomaly_reasons():
+    detector = AnomalyDetector()
+
+    record = {
+        "timestamp": "2026-09-20T10:10:00",
+        "service": "payment-service",
+        "response_time_ms": 501,
+        "cpu_percent": 81,
+        "memory_percent": 81,
+        "log_level": "WARNING",
+        "message": "Multiple service thresholds exceeded"
+    }
+
+    event = detector.detect(record)
+
+    assert event["reasons"] == [
+        "High response time",
+        "High CPU utilization",
+        "High memory utilization",
+        "Error log detected"
+    ]
+
+
+def test_producer_rejects_empty_event():
+    topic = EventTopic("anomaly-events")
+    producer = EventProducer(topic)
+
+    assert producer.publish(None) is False
+    assert topic.get_messages() == []
+
+
+def test_topic_clear_removes_messages():
+    topic = EventTopic("anomaly-events")
+    event = {"type": "ANOMALY"}
+
+    topic.publish(event)
+    assert topic.get_messages() == [event]
+
+    topic.clear()
+
+    assert topic.get_messages() == []
+
+def test_pipeline_script_prints_detected_event(tmp_path, monkeypatch, capsys):
+    data_directory = tmp_path / "data"
+    data_directory.mkdir()
+
+    records = [
+        {
+            "timestamp": "2026-09-20T10:05:00",
+            "service": "payment-service",
+            "response_time_ms": 700,
+            "cpu_percent": 90,
+            "memory_percent": 95,
+            "log_level": "WARNING",
+            "message": "Service is unhealthy"
+        }
+    ]
+
+    (data_directory / "service_data.json").write_text(
+        json.dumps(records),
+        encoding="utf-8"
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    runpy.run_path(
+        str(Path(__file__).parents[1] / "src" / "aiops_pipeline.py"),
+        run_name="__main__"
+    )
+
+    output = capsys.readouterr().out
+
+    assert "AIOps Pipeline Result" in output
+    assert "Records processed: 1" in output
+    assert "Anomalies detected: 1" in output
+    assert "Events consumed: 1" in output
+    assert "Service: payment-service" in output
+    assert "Timestamp: 2026-09-20T10:05:00" in output
+    assert "Type: ANOMALY" in output
+    assert "Reasons:" in output
