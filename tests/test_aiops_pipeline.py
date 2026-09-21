@@ -126,6 +126,8 @@ def test_pipeline_script_runs(tmp_path, monkeypatch, capsys):
     (data_directory / "service_data.json").write_text(
         json.dumps(records),
         encoding="utf-8"
+
+        
     )
 
     monkeypatch.chdir(tmp_path)
