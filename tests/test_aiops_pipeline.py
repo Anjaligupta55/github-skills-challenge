@@ -103,7 +103,8 @@ def test_pipeline_processes_normal_and_anomalous_records(tmp_path):
     assert result["records_processed"] == 2
     assert len(result["anomalies_detected"]) == 1
     assert result["anomalies_detected"][0]["type"] == "ANOMALY"
-    assert result["events_consumed"] == []
+    assert len(result["events_consumed"]) == 1
+    assert result["events_consumed"][0]["type"] == "ANOMALY"
 
 
 def test_pipeline_script_runs(tmp_path, monkeypatch, capsys):
