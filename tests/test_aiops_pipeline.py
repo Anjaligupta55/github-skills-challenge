@@ -184,3 +184,42 @@ def test_topic_clear_removes_messages():
     topic.clear()
 
     assert topic.get_messages() == []
+
+def test_pipeline_script_prints_detected_event(tmp_path, monkeypatch, capsys):
+    data_directory = tmp_path / "data"
+    data_directory.mkdir()
+
+    records = [
+        {
+            "timestamp": "2026-09-20T10:05:00",
+            "service": "payment-service",
+            "response_time_ms": 700,
+            "cpu_percent": 90,
+            "memory_percent": 95,
+            "log_level": "WARNING",
+            "message": "Service is unhealthy"
+        }
+    ]
+
+    (data_directory / "service_data.json").write_text(
+        json.dumps(records),
+        encoding="utf-8"
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    runpy.run_path(
+        str(Path(__file__).parents[1] / "src" / "aiops_pipeline.py"),
+        run_name="__main__"
+    )
+
+    output = capsys.readouterr().out
+
+    assert "AIOps Pipeline Result" in output
+    assert "Records processed: 1" in output
+    assert "Anomalies detected: 1" in output
+    assert "Events consumed: 1" in output
+    assert "Service: payment-service" in output
+    assert "Timestamp: 2026-09-20T10:05:00" in output
+    assert "Type: ANOMALY" in output
+    assert "Reasons:" in output
